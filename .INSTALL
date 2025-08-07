@@ -1,0 +1,122 @@
+post_install() {
+	gtk-update-icon-cache -q -t -f usr/share/icons/hicolor
+
+	# Helper function to log where failures happen
+	failure() {
+	  local lineno=$1
+	  local msg=$2
+	  echo "Please send a message to help@allthenticate.com with the following error:" >&2
+	  echo "Installer Error ($lineno): $msg" >&2
+	}
+	trap 'failure ${LINENO} "$BASH_COMMAND"' ERR
+
+	    # shellcheck disable=SC1091
+	{
+	  # pam-auth-update --package
+
+	  echo "Done configuring system."
+	}
+
+	{
+
+	  # if [[ -z "${UPDATE_BLE_PARAMS}" ]]; then
+	  #   db_get allthenticate/modifyble || true
+	  #   UPDATE_BLE_PARAMS="$RET"
+	  # fi
+	  UPDATE_BLE_PARAMS="false"
+
+	  # # Check if the environment variable AUTO_UPDATE is set
+	  # if [[ -z "${AUTO_UPDATE}" ]]; then
+	  #   db_get allthenticate/autoupdate || true
+	  #   AUTO_UPDATE="$RET"
+	  # fi
+	  AUTO_UPDATE="false"
+
+	  # We need to stop the debian front end so this process can 
+	  # db_stop || true
+
+	  # Write the startup settings to the local settings file
+	  echo "Local Settings: Modify Bluetooth=$UPDATE_BLE_PARAMS Auto Update=$AUTO_UPDATE"
+	  CONFIG_PATH="/opt/sda/conf/startup_settings.json"
+	  TMP="/tmp/allthenticate_startup_settings.json"
+	  if ! [ -f "$CONFIG_PATH" ]; then
+	    mkdir -p /opt/sda/conf
+	    echo '{}' > "$CONFIG_PATH"
+	  fi
+	  jq ".configure_bluetooth_at_startup=$UPDATE_BLE_PARAMS" $CONFIG_PATH > $TMP && mv $TMP $CONFIG_PATH
+	  jq ".auto_update=$AUTO_UPDATE" $CONFIG_PATH > $TMP && mv $TMP $CONFIG_PATH
+
+	  echo "Done configuring settings."
+	}
+
+	APP_PROFILE="/etc/apparmor.d/allthenticate"
+	if [ -f "$APP_PROFILE" ]; then
+	    # Add the local/ include
+	    LOCAL_APP_PROFILE="/etc/apparmor.d/local/allthenticate"
+
+	    test -e "$LOCAL_APP_PROFILE" || {
+	        mkdir -p `dirname "$LOCAL_APP_PROFILE"`
+	        install --mode 644 /dev/null "$LOCAL_APP_PROFILE"
+	    }
+
+	    # Reload the profile, including any abstraction updates
+	    if aa-enabled --quiet 2>/dev/null; then
+	        apparmor_parser -r -T -W "$APP_PROFILE" || true
+	    fi
+	fi
+	# # This will only remove masks created by d-s-h on package removal.
+	# deb-systemd-helper unmask 'sda-service.service' >/dev/null || true
+
+	# # was-enabled defaults to true, so new installations run enable.
+	# if deb-systemd-helper --quiet was-enabled 'sda-service.service'; then
+	# 	# Enables the unit on first installation, creates new
+	# 	# symlinks on upgrades if the unit file has changed.
+	# 	deb-systemd-helper enable 'sda-service.service' >/dev/null || true
+	# else
+	# 	# Update the statefile to add new symlinks (if any), which need to be
+	# 	# cleaned up on purge. Also remove old symlinks.
+	# 	deb-systemd-helper update-state 'sda-service.service' >/dev/null || true
+	# fi
+	if [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+		systemctl restart 'sda-service.service' >/dev/null || true
+	fi
+	# This will only remove masks created by d-s-h on package removal.
+	# deb-systemd-helper unmask 'allthenticate-auto-update.timer' >/dev/null || true
+
+	# was-enabled defaults to true, so new installations run enable.
+	# if deb-systemd-helper --quiet was-enabled 'allthenticate-auto-update.timer'; then
+	# 	# Enables the unit on first installation, creates new
+	# 	# symlinks on upgrades if the unit file has changed.
+	# 	deb-systemd-helper enable 'allthenticate-auto-update.timer' >/dev/null || true
+	# else
+	# 	# Update the statefile to add new symlinks (if any), which need to be
+	# 	# cleaned up on purge. Also remove old symlinks.
+	# 	deb-systemd-helper update-state 'allthenticate-auto-update.timer' >/dev/null || true
+	# fi
+	if [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+		systemctl restart 'allthenticate-auto-update.service' 'allthenticate-auto-update.timer' >/dev/null || true
+	fi
+
+	update-desktop-database -q
+}
+
+post_upgrade() {
+	post_install
+}
+
+pre_remove() {
+	if [ -d /run/systemd/system ]; then
+		systemctl stop 'allthenticate-auto-update.service' 'allthenticate-auto-update.timer' >/dev/null || true
+		systemctl stop 'sda-service.service' >/dev/null || true
+	fi
+}
+
+post_remove() {
+	gtk-update-icon-cache -q -t -f usr/share/icons/hicolor
+
+	rm -rf /opt/sda
+
+	update-desktop-database -q
+}
